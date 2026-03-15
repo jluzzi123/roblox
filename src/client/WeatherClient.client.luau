@@ -15,16 +15,6 @@ local camera     = workspace.CurrentCamera
 local character = player.Character or player.CharacterAdded:Wait()
 local hrp       = character:WaitForChild("HumanoidRootPart", 10)
 
--- Re-grab on respawn
-player.CharacterAdded:Connect(function(char)
-	character = char
-	hrp = char:WaitForChild("HumanoidRootPart", 10)
-	-- Re-parent rain emitter
-	if rainPart then
-		rainPart.Parent = char
-	end
-end)
-
 -- ── RAIN PARTICLE EMITTER ─────────────────────────────────────────────────────
 local rainPart = Instance.new("Part")
 rainPart.Name        = "RainEmitter"
@@ -35,22 +25,22 @@ rainPart.Transparency = 1
 rainPart.CastShadow  = false
 rainPart.Parent      = character
 
--- Weld rain part above player head
+-- Set CFrame FIRST, then create weld so offset is recorded correctly
+rainPart.CFrame = hrp.CFrame * CFrame.new(0, 18, 0)
 local weld = Instance.new("WeldConstraint")
 weld.Part0  = hrp
 weld.Part1  = rainPart
 weld.Parent = rainPart
-rainPart.CFrame = hrp.CFrame * CFrame.new(0, 18, 0)
 
 local rainEmitter = Instance.new("ParticleEmitter")
 rainEmitter.Name             = "RainDrops"
 rainEmitter.Texture          = "rbxassetid://6101261905"  -- thin vertical streak
 rainEmitter.Color            = ColorSequence.new(Color3.fromRGB(180, 200, 230))
 rainEmitter.Transparency     = NumberSequence.new({
-	NumberSequenceKeypoint.new(0, 0.6),
+	NumberSequenceKeypoint.new(0, 0.3),
 	NumberSequenceKeypoint.new(1, 1.0),
 })
-rainEmitter.Size             = NumberSequence.new(0.06)
+rainEmitter.Size             = NumberSequence.new(0.10)
 rainEmitter.LightEmission    = 0.0
 rainEmitter.LightInfluence   = 1.0
 rainEmitter.Speed            = NumberRange.new(28, 45)
@@ -62,6 +52,65 @@ rainEmitter.Rate             = 0            -- starts off; enabled by weather st
 rainEmitter.LockedToPart     = false
 rainEmitter.EmissionDirection = Enum.NormalId.Bottom
 rainEmitter.Parent           = rainPart
+
+-- ── GROUND SPLASH EMITTER ─────────────────────────────────────────────────────
+local splashPart = Instance.new("Part")
+splashPart.Name         = "SplashEmitter"
+splashPart.Size         = Vector3.new(8, 1, 8)
+splashPart.Anchored     = false
+splashPart.CanCollide   = false
+splashPart.Transparency = 1
+splashPart.CastShadow   = false
+splashPart.Parent       = character
+
+-- Set CFrame FIRST, then create weld
+splashPart.CFrame = hrp.CFrame * CFrame.new(0, -2, 0)
+local splashWeld = Instance.new("WeldConstraint")
+splashWeld.Part0  = hrp
+splashWeld.Part1  = splashPart
+splashWeld.Parent = splashPart
+
+local splashEmitter = Instance.new("ParticleEmitter")
+splashEmitter.Name              = "RainSplash"
+splashEmitter.Texture           = "rbxassetid://6101261905"
+splashEmitter.Color             = ColorSequence.new(Color3.fromRGB(180, 210, 240))
+splashEmitter.Transparency      = NumberSequence.new({
+	NumberSequenceKeypoint.new(0, 0.4),
+	NumberSequenceKeypoint.new(1, 1.0),
+})
+splashEmitter.Size              = NumberSequence.new({
+	NumberSequenceKeypoint.new(0, 0.05),
+	NumberSequenceKeypoint.new(1, 0.12),
+})
+splashEmitter.Speed             = NumberRange.new(2, 6)
+splashEmitter.SpreadAngle       = Vector2.new(70, 70)
+splashEmitter.Rotation          = NumberRange.new(0, 360)
+splashEmitter.Lifetime          = NumberRange.new(0.2, 0.5)
+splashEmitter.Rate              = 0
+splashEmitter.LightInfluence    = 1.0
+splashEmitter.EmissionDirection = Enum.NormalId.Top
+splashEmitter.Parent            = splashPart
+
+-- ── RESPAWN HANDLER ───────────────────────────────────────────────────────────
+player.CharacterAdded:Connect(function(char)
+	character = char
+	hrp = char:WaitForChild("HumanoidRootPart", 10)
+
+	rainPart.Parent   = char
+	splashPart.Parent = char
+
+	rainPart.CFrame = hrp.CFrame * CFrame.new(0, 18, 0)
+	local newRainWeld = Instance.new("WeldConstraint")
+	newRainWeld.Part0  = hrp
+	newRainWeld.Part1  = rainPart
+	newRainWeld.Parent = rainPart
+
+	splashPart.CFrame = hrp.CFrame * CFrame.new(0, -2, 0)
+	local newSplashWeld = Instance.new("WeldConstraint")
+	newSplashWeld.Part0  = hrp
+	newSplashWeld.Part1  = splashPart
+	newSplashWeld.Parent = splashPart
+end)
 
 -- ── SCREEN COLOR CORRECTION PER WEATHER ───────────────────────────────────────
 -- We layer a second ColorCorrectionEffect on top of the base atmosphere one
@@ -121,8 +170,9 @@ local function doClientLightningFlash()
 end
 
 -- ── WEATHER STATE HANDLING ────────────────────────────────────────────────────
-local currentState   = "Clear"
-local targetRainRate = 0
+local currentState    = "Clear"
+local targetRainRate  = 0
+local targetSplashRate = 0
 
 local weatherRemote = ReplicatedStorage:WaitForChild("WeatherState", 15)
 if weatherRemote then
@@ -134,13 +184,16 @@ if weatherRemote then
 
 		currentState = state
 
-		-- Rain emitter rate
+		-- Rain emitter rates
 		if state == "Rain" then
-			targetRainRate = 120
+			targetRainRate   = 200
+			targetSplashRate = 60
 		elseif state == "Storm" then
-			targetRainRate = 280
+			targetRainRate   = 400
+			targetSplashRate = 130
 		else
-			targetRainRate = 0
+			targetRainRate   = 0
+			targetSplashRate = 0
 		end
 	end)
 end
@@ -159,8 +212,10 @@ RunService.Heartbeat:Connect(function(dt)
 	weatherCC.Saturation = weatherCC.Saturation + (cc.saturation - weatherCC.Saturation) * SPEED
 	weatherCC.TintColor  = lerpColor(weatherCC.TintColor, cc.tint, SPEED)
 
-	-- Smooth rain emitter rate
-	rainEmitter.Rate = rainEmitter.Rate + (targetRainRate - rainEmitter.Rate) * math.min(dt * 0.6, 1)
+	-- Smooth rain emitter rates
+	local blendRate = math.min(dt * 0.6, 1)
+	rainEmitter.Rate   = rainEmitter.Rate   + (targetRainRate   - rainEmitter.Rate)   * blendRate
+	splashEmitter.Rate = splashEmitter.Rate + (targetSplashRate - splashEmitter.Rate) * blendRate
 end)
 
 print("[WeatherClient] Initialized.")
